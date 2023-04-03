@@ -76,14 +76,7 @@ class HueLightService {
 
   async writeStateAndBrightnessToApi() {
     // https://developers.meethue.com/develop/get-started-2/core-concepts/#controlling-light
-    let brightness = this.brightness * 254;
-    if (brightness <= 0) {
-      brightness = 1;
-    }
-    if (brightness > 254) {
-      brightness = 254;
-    }
-
+    const brightness = Math.min(Math.max(this.brightness * 254, 1), 254);
     const lights = await this.hueApi.lights.getAll();
     return Promise.all(lights.map(async (light) => {
       return this.hueApi.lights.setLightState(light.id, { on: true, bri: brightness });
