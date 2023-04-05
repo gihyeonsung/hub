@@ -138,7 +138,7 @@ const main = async () => {
     const hueApi = await v3.api.createLocal(config.HUE_HOST).connect(config.HUE_USERNAME, config.HUE_CLIENTKEY);
     const lightService = new HueLightService(hueApi);
 
-    setInterval(async () => { await lightService.tick(); }, 1 * time.SECOND);
+    setInterval(async () => { await lightService.tick(); }, config.TICK_INTERVAL);
 
     server.post('/wake-up', async (request, reply) => {
       lightService.wakeUpNow();
@@ -148,7 +148,7 @@ const main = async () => {
       lightService.sleepNow();
     })
 
-    await server.listen({ host: '0.0.0.0', port: 9999 })
+    await server.listen({ host: config.HOST, port: config.PORT })
   } catch (e) {
     log(e);
     process.exit(1);
