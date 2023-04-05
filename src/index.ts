@@ -61,33 +61,63 @@ const getBrightness = (state: LightServiceState, now: number): number => {
   }
 }
 
+const getCool = (state: LightServiceState, now: number): number => {
+  switch (state) {
+    case 'waked-up-early':
+    case 'waked-up':
+      return 1;
+    case 'pre-sleep':
+      return Math.max(1 - (now - time.tSubAbs(config.BEDTIME, config.PRE_DELTA)) / config.PRE_DELTA, config.BRIGHTNESS_MIN);
+    case 'slept-early':
+    case 'slept':
+      return config.BRIGHTNESS_MIN;
+    case 'pre-wake-up':
+      return Math.max((now - time.tSubAbs(config.WAKE_UP_TIME, config.PRE_DELTA)) / config.PRE_DELTA, config.BRIGHTNESS_MIN);
+  }
+}
+
 class HueLightService {
   private state: LightServiceState;
-  private brightness: number;
+  private brightness: number; // 1: bright, 0: dark
+  private cool: number; // 1: cool, 0: warm
 
   constructor (private readonly hueApi: HueApi) {
     const now = time.tAbs(time.nowTimezone(config.TIME_OFFECT) % time.DAY);
     this.state = getNextState('waked-up', now)
     this.brightness = getBrightness(this.state, now);
+    this.cool = getCool(this.state, now);
   }
 
   updateStateAndBrightness() {
     const now = time.tAbs(time.nowTimezone(config.TIME_OFFECT) % time.DAY);
     this.state = getNextState(this.state, now);
     this.brightness = getBrightness(this.state, now);
+    this.cool = getCool(this.state, now);
   }
 
   async writeStateAndBrightnessToApi() {
     // https://developers.meethue.com/develop/get-started-2/core-concepts/#controlling-light
-    const brightness = Math.min(Math.max(this.brightness * 254, 1), 254);
+    const hueBri = this.brightness * 254
+    const hueBriSafe = Math.min(Math.max(hueBri, 1), 254);
+
+    const hueCt = config.CT_MAX - this.cool * (config.CT_MAX - config.CT_MIN);
+    const hueCtSafe = Math.min(Math.max(hueCt, 153), 500);
+
     const lights = await this.hueApi.lights.getAll();
     return Promise.all(lights.map(async (light) => {
-      return this.hueApi.lights.setLightState(light.id, { on: true, bri: brightness });
+      return this.hueApi.lights.setLightState(
+        light.id,
+        {
+          on: true,
+          bri: hueBriSafe,
+          ct: hueCtSafe,
+        }
+      );
     }));
   }
 
   async tick() {
-    log(this.state, this.brightness)
+    log(this.state, this.brightness, this.cool)
     this.updateStateAndBrightness();
     await this.writeStateAndBrightnessToApi();
   }
