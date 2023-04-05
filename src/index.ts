@@ -142,10 +142,12 @@ const main = async () => {
 
     server.post('/wake-up', async (request, reply) => {
       lightService.wakeUpNow();
+      await lightService.tick();
     })
 
     server.post('/sleep', async (request, reply) => {
       lightService.sleepNow();
+      await lightService.tick();
     })
 
     await server.listen({ host: config.HOST, port: config.PORT })
