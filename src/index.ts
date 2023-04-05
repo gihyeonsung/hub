@@ -1,5 +1,7 @@
+import fastify from 'fastify'
 import { v3 } from 'node-hue-api';
 import { Api as HueApi } from 'node-hue-api/dist/esm/api/Api';
+
 import * as config from './config';
 import * as time from './time';
 
@@ -8,9 +10,9 @@ const log = (...args: any[]) => {
 }
 
 type LightServiceState = 
-  | 'wake-up-inprogress'
+  | 'pre-wake-up'
   | 'waked-up'
-  | 'sleep-inprogress'
+  | 'pre-sleep'
   | 'slept'
   | 'waked-up-early'
   | 'slept-early';
@@ -18,25 +20,26 @@ type LightServiceState =
 const getNextState = (stateBefore: LightServiceState, now: number): LightServiceState => {
   switch (stateBefore) {
     case 'waked-up-early':
-      if (time.tIn(time.tSubAbs(config.BEDTIME, 30 * time.MINUTE), time.tAddAbs(config.BEDTIME, 30 * time.MINUTE), now)) {
-        return 'sleep-inprogress';
+      if (time.tIn(time.tSubAbs(config.BEDTIME, config.PRE_DELTA), config.BEDTIME, now)) {
+        return 'pre-sleep';
       }
       return 'waked-up-early';
     case 'slept-early':
-      if (time.tIn(time.tSubAbs(config.WAKE_UP_TIME, 30 * time.MINUTE), time.tAddAbs(config.WAKE_UP_TIME, 30 * time.MINUTE), now)) {
-        return 'wake-up-inprogress';
+      if (time.tIn(time.tSubAbs(config.WAKE_UP_TIME, config.PRE_DELTA), config.WAKE_UP_TIME, now)) {
+        return 'pre-wake-up';
       }
+      return 'slept-early';
     default:
-      if (time.tIn(time.tSubAbs(config.BEDTIME, 30 * time.MINUTE), time.tAddAbs(config.BEDTIME, 30 * time.MINUTE), now)) {
-        return 'sleep-inprogress';
+      if (time.tIn(time.tSubAbs(config.BEDTIME, config.PRE_DELTA), config.BEDTIME, now)) {
+        return 'pre-sleep';
       }
-      if (time.tIn(time.tAddAbs(config.BEDTIME, 30 * time.MINUTE), time.tSubAbs(config.WAKE_UP_TIME, 30 * time.MINUTE), now)) {
+      if (time.tIn(config.BEDTIME, time.tSubAbs(config.WAKE_UP_TIME, config.PRE_DELTA), now)) {
         return 'slept';
       }
-      if (time.tIn(time.tSubAbs(config.WAKE_UP_TIME, 30 * time.MINUTE), time.tAddAbs(config.WAKE_UP_TIME, 30 * time.MINUTE), now)) {
-        return 'wake-up-inprogress';
+      if (time.tIn(time.tSubAbs(config.WAKE_UP_TIME, config.PRE_DELTA), config.WAKE_UP_TIME, now)) {
+        return 'pre-wake-up';
       }
-      if (time.tIn(time.tAddAbs(config.WAKE_UP_TIME, 30 * time.MINUTE), time.tSubAbs(config.BEDTIME, 30 * time.MINUTE), now)) {
+      if (time.tIn(config.WAKE_UP_TIME, time.tSubAbs(config.BEDTIME, config.PRE_DELTA), now)) {
         return 'waked-up';
       }
       return stateBefore;
@@ -48,13 +51,13 @@ const getBrightness = (state: LightServiceState, now: number): number => {
     case 'waked-up-early':
     case 'waked-up':
       return 1;
-    case 'sleep-inprogress':
-      return Math.max(1 - (now - time.tSubAbs(config.BEDTIME, 30 * time.MINUTE)) / time.HOUR, config.BRIGHTNESS_MIN);
+    case 'pre-sleep':
+      return Math.max(1 - (now - time.tSubAbs(config.BEDTIME, config.PRE_DELTA)) / config.PRE_DELTA, config.BRIGHTNESS_MIN);
     case 'slept-early':
     case 'slept':
       return config.BRIGHTNESS_MIN;
-    case 'wake-up-inprogress':
-      return Math.max((now - time.tSubAbs(config.WAKE_UP_TIME, 30 * time.MINUTE)) / time.HOUR, config.BRIGHTNESS_MIN);
+    case 'pre-wake-up':
+      return Math.max((now - time.tSubAbs(config.WAKE_UP_TIME, config.PRE_DELTA)) / config.PRE_DELTA, config.BRIGHTNESS_MIN);
   }
 }
 
@@ -84,6 +87,7 @@ class HueLightService {
   }
 
   async tick() {
+    log(this.state, this.brightness)
     this.updateStateAndBrightness();
     await this.writeStateAndBrightnessToApi();
   }
@@ -99,9 +103,22 @@ class HueLightService {
 
 const main = async () => {
   try {
+    const server = fastify()
+
     const hueApi = await v3.api.createLocal(config.HUE_HOST).connect(config.HUE_USERNAME, config.HUE_CLIENTKEY);
     const lightService = new HueLightService(hueApi);
-    setInterval(async () => { await lightService.tick(); }, 1 * time.MINUTE);
+
+    setInterval(async () => { await lightService.tick(); }, 1 * time.SECOND);
+
+    server.post('/wake-up', async (request, reply) => {
+      lightService.wakeUpNow();
+    })
+
+    server.post('/sleep', async (request, reply) => {
+      lightService.sleepNow();
+    })
+
+    await server.listen({ host: '0.0.0.0', port: 9999 })
   } catch (e) {
     log(e);
     process.exit(1);
