@@ -15,10 +15,16 @@ type LightServiceState =
   | 'pre-sleep'
   | 'slept'
   | 'waked-up-early'
-  | 'slept-early';
+  | 'slept-early'
+  | 'wake-up-later'
+  | 'sleep-later';
 
 const getNextState = (stateBefore: LightServiceState, now: number): LightServiceState => {
   switch (stateBefore) {
+    case 'sleep-later':
+      return 'sleep-later';
+    case 'wake-up-later':
+      return 'wake-up-later';
     case 'waked-up-early':
       if (time.tIn(time.tSubAbs(config.BEDTIME, config.PRE_DELTA), config.BEDTIME, now)) {
         return 'pre-sleep';
@@ -50,11 +56,13 @@ const getBrightness = (state: LightServiceState, now: number): number => {
   switch (state) {
     case 'waked-up-early':
     case 'waked-up':
+    case 'sleep-later':
       return 1;
     case 'pre-sleep':
       return Math.max(1 - (now - time.tSubAbs(config.BEDTIME, config.PRE_DELTA)) / config.PRE_DELTA, config.BRIGHTNESS_MIN);
     case 'slept-early':
     case 'slept':
+    case 'wake-up-later':
       return config.BRIGHTNESS_MIN;
     case 'pre-wake-up':
       return Math.max((now - time.tSubAbs(config.WAKE_UP_TIME, config.PRE_DELTA)) / config.PRE_DELTA, config.BRIGHTNESS_MIN);
@@ -65,11 +73,13 @@ const getCool = (state: LightServiceState, now: number): number => {
   switch (state) {
     case 'waked-up-early':
     case 'waked-up':
+    case 'sleep-later':
       return 1;
     case 'pre-sleep':
       return 1 - (now - time.tSubAbs(config.BEDTIME, config.PRE_DELTA)) / config.PRE_DELTA;
     case 'slept-early':
     case 'slept':
+    case 'wake-up-later':
       return 0;
     case 'pre-wake-up':
       return (now - time.tSubAbs(config.WAKE_UP_TIME, config.PRE_DELTA)) / config.PRE_DELTA;
@@ -126,8 +136,16 @@ class HueLightService {
     this.state = 'waked-up-early';
   }
 
+  wakeUpLater() {
+    this.state = 'wake-up-later';
+  }
+
   sleepNow() {
     this.state = 'slept-early';
+  }
+
+  sleepLater() {
+    this.state = 'sleep-later';
   }
 }
 
@@ -145,10 +163,21 @@ const main = async () => {
       await lightService.tick();
     })
 
+    server.post('/wake-up-later', async (request, reply) => {
+      lightService.wakeUpLater();
+      await lightService.tick();
+    })
+
     server.post('/sleep', async (request, reply) => {
       lightService.sleepNow();
       await lightService.tick();
     })
+
+    server.post('/sleep-later', async (request, reply) => {
+      lightService.sleepLater();
+      await lightService.tick();
+    })
+
 
     await server.listen({ host: config.HOST, port: config.PORT })
   } catch (e) {
