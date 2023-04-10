@@ -74,15 +74,15 @@ const getCool = (state: LightServiceState, now: number): number => {
     case 'waked-up-early':
     case 'waked-up':
     case 'sleep-later':
-      return 1;
+      return config.COOL_MAX;
     case 'pre-sleep':
-      return 1 - (now - time.tSubAbs(config.BEDTIME, config.PRE_DELTA)) / config.PRE_DELTA;
+      return Math.min(1 - (now - time.tSubAbs(config.BEDTIME, config.PRE_DELTA)) / config.PRE_DELTA, config.COOL_MAX);
     case 'slept-early':
     case 'slept':
     case 'wake-up-later':
       return 0;
     case 'pre-wake-up':
-      return (now - time.tSubAbs(config.WAKE_UP_TIME, config.PRE_DELTA)) / config.PRE_DELTA;
+      return Math.min((now - time.tSubAbs(config.WAKE_UP_TIME, config.PRE_DELTA)) / config.PRE_DELTA, config.COOL_MAX);
   }
 }
 
