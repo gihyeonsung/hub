@@ -8,4 +8,4 @@ RUN corepack enable && \
     corepack prepare yarn@stable --activate && \
     yarn
 
-ENTRYPOINT yarn dev
+ENTRYPOINT yarn start
