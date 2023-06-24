@@ -2,7 +2,7 @@ import fastify from 'fastify'
 import { v3 } from 'node-hue-api';
 import { Api as HueApi } from 'node-hue-api/dist/esm/api/Api';
 
-import * as config from './config';
+import config from './config';
 import * as time from './time';
 
 const log = (...args: any[]) => {
