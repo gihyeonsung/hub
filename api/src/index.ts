@@ -1,189 +1,27 @@
-import fastify from 'fastify'
-import { v3 } from 'node-hue-api';
-import { Api as HueApi } from 'node-hue-api/dist/esm/api/Api';
+import { fastify } from "fastify";
+import { v3 } from "node-hue-api";
 
-import config from './config';
-import * as time from './time';
+import { ConfigRepo } from "./config.repo";
+import { HueLightService } from "./hue-light.service";
+import { log } from "./logger";
+import { HOUR } from "./time";
 
-const log = (...args: any[]) => {
-  console.log(new Date(), ...args);
-}
-
-type LightServiceState = 
-  | 'pre-wake-up'
-  | 'waked-up'
-  | 'pre-sleep'
-  | 'slept'
-  | 'waked-up-early'
-  | 'slept-early'
-  | 'wake-up-later'
-  | 'sleep-later';
-
-const getNextState = (stateBefore: LightServiceState, now: number): LightServiceState => {
-  switch (stateBefore) {
-    case 'sleep-later':
-      return 'sleep-later';
-    case 'wake-up-later':
-      return 'wake-up-later';
-    case 'waked-up-early':
-      if (time.tIn(time.tSubAbs(config.BEDTIME, config.PRE_DELTA), config.BEDTIME, now)) {
-        return 'pre-sleep';
-      }
-      return 'waked-up-early';
-    case 'slept-early':
-      if (time.tIn(time.tSubAbs(config.WAKE_UP_TIME, config.PRE_DELTA), config.WAKE_UP_TIME, now)) {
-        return 'pre-wake-up';
-      }
-      return 'slept-early';
-    default:
-      if (time.tIn(time.tSubAbs(config.BEDTIME, config.PRE_DELTA), config.BEDTIME, now)) {
-        return 'pre-sleep';
-      }
-      if (time.tIn(config.BEDTIME, time.tSubAbs(config.WAKE_UP_TIME, config.PRE_DELTA), now)) {
-        return 'slept';
-      }
-      if (time.tIn(time.tSubAbs(config.WAKE_UP_TIME, config.PRE_DELTA), config.WAKE_UP_TIME, now)) {
-        return 'pre-wake-up';
-      }
-      if (time.tIn(config.WAKE_UP_TIME, time.tSubAbs(config.BEDTIME, config.PRE_DELTA), now)) {
-        return 'waked-up';
-      }
-      return stateBefore;
-  }
-}
-
-const getBrightness = (state: LightServiceState, now: number): number => {
-  switch (state) {
-    case 'waked-up-early':
-    case 'waked-up':
-    case 'sleep-later':
-      return 1;
-    case 'pre-sleep':
-      return Math.max(1 - (now - time.tSubAbs(config.BEDTIME, config.PRE_DELTA)) / config.PRE_DELTA, config.BRIGHTNESS_MIN);
-    case 'slept-early':
-    case 'slept':
-    case 'wake-up-later':
-      return config.BRIGHTNESS_MIN;
-    case 'pre-wake-up':
-      return Math.max((now - time.tSubAbs(config.WAKE_UP_TIME, config.PRE_DELTA)) / config.PRE_DELTA, config.BRIGHTNESS_MIN);
-  }
-}
-
-const getCool = (state: LightServiceState, now: number): number => {
-  switch (state) {
-    case 'waked-up-early':
-    case 'waked-up':
-    case 'sleep-later':
-      return config.COOL_MAX;
-    case 'pre-sleep':
-      return Math.min(1 - (now - time.tSubAbs(config.BEDTIME, config.PRE_DELTA)) / config.PRE_DELTA, config.COOL_MAX);
-    case 'slept-early':
-    case 'slept':
-    case 'wake-up-later':
-      return 0;
-    case 'pre-wake-up':
-      return Math.min((now - time.tSubAbs(config.WAKE_UP_TIME, config.PRE_DELTA)) / config.PRE_DELTA, config.COOL_MAX);
-  }
-}
-
-class HueLightService {
-  private state: LightServiceState;
-  private brightness: number; // 1: bright, 0: dark
-  private cool: number; // 1: cool, 0: warm
-
-  constructor (private readonly hueApi: HueApi) {
-    const now = time.tAbs(time.nowTimezone(config.TIME_OFFECT) % time.DAY);
-    this.state = getNextState('waked-up', now)
-    this.brightness = getBrightness(this.state, now);
-    this.cool = getCool(this.state, now);
-  }
-
-  updateStateAndBrightness() {
-    const now = time.tAbs(time.nowTimezone(config.TIME_OFFECT) % time.DAY);
-    this.state = getNextState(this.state, now);
-    this.brightness = getBrightness(this.state, now);
-    this.cool = getCool(this.state, now);
-  }
-
-  async writeStateAndBrightnessToApi() {
-    // https://developers.meethue.com/develop/get-started-2/core-concepts/#controlling-light
-    const hueBri = this.brightness * 254
-    const hueBriSafe = Math.min(Math.max(hueBri, 1), 254);
-
-    const hueCt = config.CT_MAX - this.cool * (config.CT_MAX - config.CT_MIN);
-    const hueCtSafe = Math.min(Math.max(hueCt, 153), 500);
-
-    const lights = await this.hueApi.lights.getAll();
-    return Promise.all(lights.map(async (light) => {
-      return this.hueApi.lights.setLightState(
-        light.id,
-        {
-          on: true,
-          bri: hueBriSafe,
-          ct: hueCtSafe,
-        }
-      );
-    }));
-  }
-
-  async tick() {
-    log(this.state, this.brightness, this.cool)
-    this.updateStateAndBrightness();
-    await this.writeStateAndBrightnessToApi();
-  }
-
-  wakeUpNow() {
-    this.state = 'waked-up-early';
-  }
-
-  wakeUpLater() {
-    this.state = 'wake-up-later';
-  }
-
-  sleepNow() {
-    this.state = 'slept-early';
-  }
-
-  sleepLater() {
-    this.state = 'sleep-later';
-  }
-}
 
 const main = async () => {
   try {
-    const server = fastify()
+    const configRepo = new ConfigRepo('./config.json');
+    const config = await configRepo.load();
 
-    const hueApi = await v3.api.createLocal(config.HUE_HOST).connect(config.HUE_USERNAME, config.HUE_CLIENTKEY);
-    const lightService = new HueLightService(hueApi);
+    const hueApi = await v3.api.createLocal(config.hueHost).connect(config.hueUsername, config.hueClientKey);
+    const lightService = new HueLightService(hueApi, 9 * HOUR, config.scenes);
 
-    setInterval(async () => { await lightService.tick(); }, config.TICK_INTERVAL);
-
-    server.post('/wake-up', async (request, reply) => {
-      lightService.wakeUpNow();
+    setInterval(async () => {
       await lightService.tick();
-    })
-
-    server.post('/wake-up-later', async (request, reply) => {
-      lightService.wakeUpLater();
-      await lightService.tick();
-    })
-
-    server.post('/sleep', async (request, reply) => {
-      lightService.sleepNow();
-      await lightService.tick();
-    })
-
-    server.post('/sleep-later', async (request, reply) => {
-      lightService.sleepLater();
-      await lightService.tick();
-    })
-
-
-    await server.listen({ host: config.HOST, port: config.PORT })
+    }, config.tickInterval);
   } catch (e) {
     log(e);
     process.exit(1);
   }
-}
+};
 
 main();
