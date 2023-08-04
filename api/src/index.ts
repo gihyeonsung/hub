@@ -1,4 +1,3 @@
-import { fastify } from "fastify";
 import { v3 } from "node-hue-api";
 
 import { ConfigRepo } from "./config.repo";
